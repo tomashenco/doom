@@ -1,0 +1,3 @@
+*.idea
+*__pycache__
+show_raw_picture.py
