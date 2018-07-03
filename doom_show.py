@@ -1,38 +1,33 @@
-import game_utils
-from agent import DuelingDoom
+from vizdoom_wrapper import VizdoomWrapper
+from agents import DuelingDoom
 
-from itertools import product
 from time import sleep
+from collections import OrderedDict
 
 
 episodes_to_watch = 10
 
 print('Initialising VizDoom...')
-game = game_utils.initialise_game(show_mode=True)
-
-# Action = which buttons can be pressed
-action_size = game.get_available_buttons_size()
-# Get all combinations of possible actions
-actions = [list(a) for a in product([0, 1], repeat=action_size)]
+config_path = '/home/tomasz.dobrzycki@UK.CF247.NET/dev/ViZDoom/scenarios/' \
+              'defend_the_line.cfg'
+reward_table = OrderedDict({'KILLCOUNT': 10})
+resolution = (84, 84)
+doom = VizdoomWrapper(config_path=config_path, reward_table=reward_table,
+                      state_resolution=resolution, show_mode=True)
 
 print('Initialising Doomguy...')
-doomguy = DuelingDoom(game_utils.screen_resolution, action_size)
+doomguy = DuelingDoom(doom.get_state_size(), doom.get_action_size())
 doomguy.load_model()
 
 for _ in range(episodes_to_watch):
-    game.new_episode()
-    while not game.is_episode_finished():
-        state = game_utils.preprocess_image(game.get_state().screen_buffer)
+    done = False
+    doom.new_game()
+    while not done:
+        state = doom.get_current_state()
         best_action = doomguy.act(state)
-
-        game.set_action(actions[best_action])
-        for _ in range(game_utils.frame_repeat):
-            game.advance_action()
-
-        # if game.is_episode_finished():
-        #     sleep(1.0)
+        doom.set_action(best_action)
 
     # Sleep between episodes
     sleep(1.0)
-    score = game.get_total_reward()
-    print("Total score: ", score)
+    score = doom.get_total_reward()
+    print('Total score: {}'.format(score))

@@ -1,82 +1,55 @@
-from agent import DuelingDoom
-import game_utils
+from agents import DuelingDoom
+from vizdoom_wrapper import VizdoomWrapper
 
-from itertools import product
 import tqdm
 import numpy as np
+from collections import OrderedDict
 
-training_episodes_per_epoch = 2000
+
+training_episodes_per_epoch = 10000
 testing_episodes_per_epoch = 100
-epochs = 20
-replay_batch_size = 64
-
-# Parameters for enhancing reward
-enhance = False
-health_loss_penalty = 0
-killcount_reward = 1.0
+epochs = 200
+replay_batch_size = 32
 
 load_pretrained_network = False
 
 print('Initialising VizDoom...')
-game = game_utils.initialise_game(show_mode=False)
-
-# Action = which buttons can be pressed
-action_size = game.get_available_buttons_size()
-# Get all combinations of possible actions
-actions = [list(a) for a in product([0, 1], repeat=action_size)]
+config_path = '/home/tomasz.dobrzycki@UK.CF247.NET/dev/ViZDoom/scenarios/' \
+              'defend_the_line.cfg'
+reward_table = OrderedDict({'KILLCOUNT': 10})
+resolution = (84, 84)
+doom = VizdoomWrapper(config_path=config_path, reward_table=reward_table,
+                      state_resolution=resolution, show_mode=False)
 
 print('Initialising Doomguy...')
-doomguy = DuelingDoom(game_utils.screen_resolution, len(actions))
+doomguy = DuelingDoom(doom.get_state_size(), doom.get_action_size())
 if load_pretrained_network:
     doomguy.load_model()
-
-
-def enhance_reward(current_variables, game_reward, previous_variables):
-    if len(previous_variables) != len(current_variables):
-        return game_reward
-    else:
-        current_ammo, current_health, current_killcount = current_variables
-        prev_ammo, prev_health, prev_killcount = previous_variables
-
-        game_reward += (current_health - prev_health) * health_loss_penalty
-        game_reward += (current_killcount - prev_killcount) * killcount_reward
-
-        return game_reward
 
 
 for epoch in range(epochs):
     print('\nEpoch {}\n-------'.format(epoch + 1))
     print('\nTraining...')
-    game.new_episode()
+    doom.new_game()
     train_scores = []
     prev_variables = []
 
     for episode in tqdm.trange(training_episodes_per_epoch, leave=False):
         # Get state, action, reward, done and next state
-        state = game_utils.preprocess_image(game.get_state().screen_buffer)
-        best_action = doomguy.act(state)
-        reward = game.make_action(actions[best_action],
-                                  game_utils.frame_repeat)
-        done = game.is_episode_finished()
-        next_state = game_utils.preprocess_image(
-            game.get_state().screen_buffer) if not done else None
-
-        # Enhance reward
-        if enhance and not done:
-            variables = game.get_state().game_variables
-            reward = enhance_reward(variables, reward, prev_variables)
-            prev_variables = variables
+        state = doom.get_current_state()
+        best_action_index = doomguy.act(state)
+        next_state, reward, done = doom.step(best_action_index)
 
         # Save to memory
-        doomguy.remember(state, best_action, reward, next_state, done)
+        doomguy.remember(state, best_action_index, reward, next_state, done)
         # Replay from memory
         doomguy.replay(replay_batch_size)
 
         # Store results on game end
-        if game.is_episode_finished():
-            score = game.get_total_reward()
+        if done:
+            score = doom.get_total_reward()
             train_scores.append(score)
-            game.new_episode()
+            doom.new_game()
 
     if len(train_scores) > 0:
         train_scores = np.array(train_scores)
@@ -84,19 +57,20 @@ for epoch in range(epochs):
         print('Results: mean: {}±{}, min: {}, max: {}'
               .format(train_scores.mean(), train_scores.std(),
                       train_scores.min(), train_scores.max()))
+        print('Current exploration rate: {}'.format(doomguy.epsilon))
 
     print('\nTesting...')
     test_scores = []
 
     for episode in tqdm.trange(testing_episodes_per_epoch, leave=False):
-        game.new_episode()
-        while not game.is_episode_finished():
-            state = game_utils.preprocess_image(game.get_state().screen_buffer)
-            best_action = doomguy.act(state)
-            reward = game.make_action(actions[best_action],
-                                      game_utils.frame_repeat)
+        done = False
+        doom.new_game()
+        while not done:
+            state = doom.get_current_state()
+            best_action_index = doomguy.act(state)
+            _ = doom.step(best_action_index)
 
-        total_reward = game.get_total_reward()
+        total_reward = doom.get_total_reward()
         test_scores.append(total_reward)
 
     test_scores = np.array(test_scores)
@@ -104,5 +78,3 @@ for epoch in range(epochs):
     print('Results: mean: {}±{}, min: {}, max: {}'
           .format(test_scores.mean(), test_scores.std(), test_scores.min(),
                   test_scores.max()))
-
-game.close()
