@@ -6,8 +6,8 @@ import numpy as np
 from collections import OrderedDict
 
 
-training_episodes_per_epoch = 2000
-testing_episodes_per_epoch = 50
+training_episodes_per_epoch = 10000
+testing_episodes_per_epoch = 100
 epochs = 200
 replay_batch_size = 32
 
