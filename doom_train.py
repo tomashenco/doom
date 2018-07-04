@@ -6,20 +6,19 @@ import numpy as np
 from collections import OrderedDict
 
 
-training_episodes_per_epoch = 10000
-testing_episodes_per_epoch = 100
+training_episodes_per_epoch = 2000
+testing_episodes_per_epoch = 50
 epochs = 200
 replay_batch_size = 32
 
 load_pretrained_network = False
 
 print('Initialising VizDoom...')
-config_path = '/home/tomasz.dobrzycki@UK.CF247.NET/dev/ViZDoom/scenarios/' \
-              'defend_the_line.cfg'
+config_path = 'scenarios/defend_the_center.cfg'
 reward_table = OrderedDict({'KILLCOUNT': 10})
 resolution = (84, 84)
 doom = VizdoomWrapper(config_path=config_path, reward_table=reward_table,
-                      state_resolution=resolution, show_mode=False)
+                      frame_resolution=resolution, show_mode=False)
 
 print('Initialising Doomguy...')
 doomguy = DuelingDoom(doom.get_state_size(), doom.get_action_size())
@@ -68,7 +67,7 @@ for epoch in range(epochs):
         while not done:
             state = doom.get_current_state()
             best_action_index = doomguy.act(state)
-            _ = doom.step(best_action_index)
+            next_state, reward, done = doom.step(best_action_index)
 
         total_reward = doom.get_total_reward()
         test_scores.append(total_reward)

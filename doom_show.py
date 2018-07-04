@@ -8,12 +8,11 @@ from collections import OrderedDict
 episodes_to_watch = 10
 
 print('Initialising VizDoom...')
-config_path = '/home/tomasz.dobrzycki@UK.CF247.NET/dev/ViZDoom/scenarios/' \
-              'defend_the_line.cfg'
+config_path = 'scenarios/defend_the_center.cfg'
 reward_table = OrderedDict({'KILLCOUNT': 10})
 resolution = (84, 84)
 doom = VizdoomWrapper(config_path=config_path, reward_table=reward_table,
-                      state_resolution=resolution, show_mode=True)
+                      frame_resolution=resolution, show_mode=True)
 
 print('Initialising Doomguy...')
 doomguy = DuelingDoom(doom.get_state_size(), doom.get_action_size())

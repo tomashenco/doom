@@ -8,13 +8,13 @@ class VizdoomWrapper:
     def __init__(self,
                  config_path: str,
                  reward_table: OrderedDict,
-                 state_resolution: tuple=(30, 45, 1),
+                 frame_resolution: tuple=(30, 45),
                  frame_repeat: int=4,
                  frame_stack: int=4,
                  show_mode: bool=False,
                  ):
         self.config_path = config_path
-        self.state_resolution = state_resolution
+        self.frame_resolution = frame_resolution
         self.frame_repeat = frame_repeat
         self.frame_stack = frame_stack
         self.show_mode = show_mode
@@ -25,9 +25,10 @@ class VizdoomWrapper:
 
         self.possible_actions = np.eye(self.game.get_available_buttons_size())
 
-        self.stacked_frames = np.zeros((self.state_resolution[0],
-                                        self.state_resolution[1],
-                                        self.frame_stack), dtype=np.float32)
+        self.stacked_frames = np.zeros((self.frame_resolution[0],
+                                        self.frame_resolution[1],
+                                        self.frame_stack),
+                                       dtype=np.float32)
         self.variables = ()
 
     def __initialise_game(self):
@@ -42,7 +43,7 @@ class VizdoomWrapper:
         if self.show_mode:
             game.set_mode(vizdoom.Mode.ASYNC_PLAYER)
         # Game variables used for reward enhancing
-        for name, _ in self.reward_table:
+        for name, _ in self.reward_table.items():
             try:
                 game.add_available_game_variable(eval(
                     'vizdoom.GameVariable.'+name))
@@ -54,9 +55,9 @@ class VizdoomWrapper:
         return game
 
     def __preprocess_image(self, raw_image):
-        img = resize(raw_image, (self.state_resolution[0],
-                                 self.state_resolution[1]))
-        img = img.reshape((-1, *self.state_resolution))
+        img = resize(raw_image, (self.frame_resolution[0],
+                                 self.frame_resolution[1]), mode='reflect')
+        img = img.reshape((*self.frame_resolution, -1))
         img = img.astype(np.float32)
         return img
 
@@ -80,8 +81,8 @@ class VizdoomWrapper:
 
         current_frame = self.__preprocess_image(
             self.game.get_state().screen_buffer)
-        self.stacked_frames = np.append(self.stacked_frames[1:], current_frame,
-                                        axis=0)
+        self.stacked_frames = np.append(self.stacked_frames[:, :, 1:],
+                                        current_frame, axis=2)
 
     def __is_done(self):
         return self.game.is_episode_finished()
@@ -100,15 +101,17 @@ class VizdoomWrapper:
 
     def step(self, action_index):
         action = list(self.possible_actions[action_index])
-        base_reward = self.game.make_action(action, self.frame_repeat)
-        reward = self.__enhance_reward(base_reward)
-        self.total_reward += reward
+        reward = self.game.make_action(action, self.frame_repeat)
         done = self.__is_done()
+
         if not done:
+            reward = self.__enhance_reward(reward)
             self.__update()
             next_state = self.get_current_state()
         else:
             next_state = None
+
+        self.total_reward += reward
 
         return next_state, reward, done
 
