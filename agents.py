@@ -54,11 +54,12 @@ class DuelingDoom:
         self.epsilon_min = 0.001
         self.exploration_steps = 250000
 
-        self.memory = ReplayMemory(capacity=100000, state_size=self.state_size)
+        self.memory = ReplayMemory(capacity=80000, state_size=self.state_size)
 
         self.weight_backup = 'models/doom_defend_the_center.hd5'
         self.checkpointer = ModelCheckpoint(filepath=self.weight_backup,
-                                            verbose=0, save_best_only=False)
+                                            verbose=0, save_best_only=False,
+                                            period=1000)
         if initialise_model:
             self.model = self.build_model()
             self.target_model = self.build_model()
