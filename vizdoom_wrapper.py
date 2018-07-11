@@ -2,6 +2,7 @@ import vizdoom
 from skimage.transform import resize
 import numpy as np
 from collections import OrderedDict
+import time
 
 
 class VizdoomWrapper:
@@ -40,8 +41,6 @@ class VizdoomWrapper:
         # Display settings
         game.set_window_visible(self.show_mode)
         game.set_sound_enabled(self.show_mode)
-        if self.show_mode:
-            game.set_mode(vizdoom.Mode.ASYNC_PLAYER)
         # Game variables used for reward enhancing
         for name, _ in self.reward_table.items():
             try:
@@ -66,7 +65,7 @@ class VizdoomWrapper:
         previous_variables = self.variables
         current_variables = self.game.get_state().game_variables
         if len(previous_variables) != len(current_variables):
-            return reward
+            output_reward = reward
         else:
 
             for prev_var, cur_var, reward_modifier in zip(
@@ -74,17 +73,19 @@ class VizdoomWrapper:
                     self.reward_table.values()):
                 reward += (cur_var - prev_var) * reward_modifier
 
-            return reward
+            output_reward = reward
+
+        self.variables = current_variables
+
+        return output_reward
 
     def __update(self):
-        self.variables = self.game.get_state().game_variables
-
         current_frame = self.__preprocess_image(
             self.game.get_state().screen_buffer)
         self.stacked_frames = np.append(self.stacked_frames[:, :, 1:],
                                         current_frame, axis=2)
 
-    def __is_done(self):
+    def is_done(self):
         return self.game.is_episode_finished()
 
     def get_current_state(self):
@@ -102,7 +103,7 @@ class VizdoomWrapper:
     def step(self, action_index):
         action = list(self.possible_actions[action_index])
         reward = self.game.make_action(action, self.frame_repeat)
-        done = self.__is_done()
+        done = self.is_done()
 
         if not done:
             reward = self.__enhance_reward(reward)
@@ -121,6 +122,15 @@ class VizdoomWrapper:
         self.game.set_action(action)
         for _ in range(self.frame_repeat):
             self.game.advance_action()
+            time.sleep(0.02)
+
+        done = self.is_done()
+        if not done:
+            reward = self.__enhance_reward(0)
+            self.total_reward += reward
+            self.__update()
+
+        return done
 
     def new_game(self):
         self.game.new_episode()

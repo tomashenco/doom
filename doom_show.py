@@ -5,11 +5,11 @@ from time import sleep
 from collections import OrderedDict
 
 
-episodes_to_watch = 10
+episodes_to_watch = 2
 
 print('Initialising VizDoom...')
 config_path = 'scenarios/defend_the_center.cfg'
-reward_table = OrderedDict({'KILLCOUNT': 10})
+reward_table = OrderedDict({'KILLCOUNT': 10, 'AMMO2': -1})
 resolution = (84, 84)
 doom = VizdoomWrapper(config_path=config_path, reward_table=reward_table,
                       frame_resolution=resolution, show_mode=True)
@@ -24,7 +24,7 @@ for _ in range(episodes_to_watch):
     while not done:
         state = doom.get_current_state()
         best_action = doomguy.act(state)
-        doom.set_action(best_action)
+        done = doom.set_action(best_action)
 
     # Sleep between episodes
     sleep(1.0)

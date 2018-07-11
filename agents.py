@@ -3,7 +3,7 @@ from keras.layers import Dense, Conv2D, Flatten, Input, Lambda, add
 from keras.callbacks import ModelCheckpoint
 from keras.optimizers import Adam
 # needs to stay as K because keras otherwise doesn't know how to load the model
-from keras import backend as k
+from keras import backend as K
 import random
 import numpy as np
 
@@ -78,14 +78,14 @@ class DuelingDoom:
         # state value tower - V
         state_value = Dense(256, activation='relu')(x)
         state_value = Dense(1, kernel_initializer='uniform')(state_value)
-        state_value = Lambda(lambda s: k.expand_dims(s[:, 0], -1),
+        state_value = Lambda(lambda s: K.expand_dims(s[:, 0], -1),
                              output_shape=(self.action_size,))(state_value)
 
         # action advantage tower - A
         action_advantage = Dense(256, activation='relu')(x)
         action_advantage = Dense(self.action_size)(action_advantage)
         action_advantage = Lambda(
-            lambda a: a[:, :] - k.mean(a[:, :], keepdims=True),
+            lambda a: a[:, :] - K.mean(a[:, :], keepdims=True),
             output_shape=(self.action_size,))(action_advantage)
 
         # merge to state-action value function Q

@@ -15,7 +15,7 @@ load_pretrained_network = False
 
 print('Initialising VizDoom...')
 config_path = 'scenarios/defend_the_center.cfg'
-reward_table = OrderedDict({'KILLCOUNT': 10})
+reward_table = OrderedDict({'KILLCOUNT': 10, 'AMMO2': -1})
 resolution = (84, 84)
 doom = VizdoomWrapper(config_path=config_path, reward_table=reward_table,
                       frame_resolution=resolution, show_mode=False)
