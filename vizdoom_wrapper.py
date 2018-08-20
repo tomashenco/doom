@@ -89,6 +89,7 @@ class VizdoomWrapper:
         return self.game.is_episode_finished()
 
     def get_current_state(self):
+        self.__update()
         return self.stacked_frames
 
     def get_action_size(self):
@@ -107,7 +108,6 @@ class VizdoomWrapper:
 
         if not done:
             reward = self.__enhance_reward(reward)
-            self.__update()
             next_state = self.get_current_state()
         else:
             next_state = None
@@ -128,7 +128,6 @@ class VizdoomWrapper:
         if not done:
             reward = self.__enhance_reward(0)
             self.total_reward += reward
-            self.__update()
 
         return done
 

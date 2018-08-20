@@ -54,7 +54,7 @@ class DuelingDoom:
         self.epsilon_min = 0.001
         self.exploration_steps = 250000
 
-        self.memory = ReplayMemory(capacity=80000, state_size=self.state_size)
+        self.memory = ReplayMemory(capacity=25000, state_size=self.state_size)
 
         self.weight_backup = 'models/doom_defend_the_center.hd5'
         self.checkpointer = ModelCheckpoint(filepath=self.weight_backup,
@@ -69,20 +69,20 @@ class DuelingDoom:
 
     def build_model(self):
         state_input = Input(shape=self.state_size)
-        x = Conv2D(16, kernel_size=8, strides=4, activation='relu')(
+        x = Conv2D(32, kernel_size=8, strides=4, activation='relu')(
             state_input)
-        x = Conv2D(32, kernel_size=4, strides=2, activation='relu')(x)
+        x = Conv2D(64, kernel_size=4, strides=2, activation='relu')(x)
         x = Conv2D(64, kernel_size=3, strides=1, activation='relu')(x)
         x = Flatten()(x)
 
         # state value tower - V
-        state_value = Dense(256, activation='relu')(x)
+        state_value = Dense(512, activation='relu')(x)
         state_value = Dense(1, kernel_initializer='uniform')(state_value)
         state_value = Lambda(lambda s: K.expand_dims(s[:, 0], -1),
                              output_shape=(self.action_size,))(state_value)
 
         # action advantage tower - A
-        action_advantage = Dense(256, activation='relu')(x)
+        action_advantage = Dense(512, activation='relu')(x)
         action_advantage = Dense(self.action_size)(action_advantage)
         action_advantage = Lambda(
             lambda a: a[:, :] - K.mean(a[:, :], keepdims=True),
