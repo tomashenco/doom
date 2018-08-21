@@ -173,7 +173,7 @@ class PPODoom:
         self.epsilon_initial = 1.0
         self.epsilon = 1.0
         self.epsilon_min = 0.001
-        self.exploration_steps = 250000
+        self.exploration_steps = 250000 / self.epochs_per_replay
 
         self.state_size = state_size
         self.action_size = action_size
