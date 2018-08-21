@@ -8,6 +8,24 @@ import random
 import numpy as np
 
 
+def proximal_policy_optimization_loss(advantage, old_prediction):
+    def loss(y_true, y_pred):
+        clipping_epsilon = 0.2
+
+        prob = K.sum(y_true * y_pred)
+        old_prob = K.sum(y_true * old_prediction)
+        # Add small number to avoid division by 0
+        r = prob / (old_prob + 1e-10)
+
+        # Just use clipping
+        return - K.minimum(r * advantage,
+                           K.clip(r,
+                                  1 - clipping_epsilon,
+                                  1 + clipping_epsilon)) * advantage
+
+    return loss
+
+
 class ReplayMemory:
     def __init__(self, capacity, state_size):
         state_shape = (capacity, state_size[0], state_size[1], state_size[2])
@@ -138,6 +156,127 @@ class DuelingDoom:
                        target.reshape((-1, self.action_size)),
                        batch_size=sample_batch_size, epochs=1, verbose=0,
                        callbacks=[self.checkpointer])
+
+        # Make sure that model still experiments after long time
+        if self.epsilon > self.epsilon_min:
+            self.epsilon -= (self.epsilon_initial - self.epsilon_min) \
+                            / self.exploration_steps
+
+
+class PPODoom:
+    def __init__(self, state_size, action_size, actor_path, critic_path,
+                 initialise_model=True):
+        self.learning_rate = 1e-4
+        self.epochs_per_replay = 10
+
+        # Exploration parameters
+        self.epsilon_initial = 1.0
+        self.epsilon = 1.0
+        self.epsilon_min = 0.001
+        self.exploration_steps = 250000
+
+        self.state_size = state_size
+        self.action_size = action_size
+        self.actor_path = actor_path
+        self.critic_path = critic_path
+
+        self.memory = ReplayMemory(capacity=25000, state_size=self.state_size)
+        self.save_period = 1000
+        self.actor_checkpointer = ModelCheckpoint(filepath=self.actor_path,
+                                                  verbose=0,
+                                                  save_best_only=False,
+                                                  period=self.save_period)
+        self.critic_checkpointer = ModelCheckpoint(filepath=self.critic_path,
+                                                   verbose=0,
+                                                   save_best_only=False,
+                                                   period=self.save_period)
+
+        if initialise_model:
+            self.actor = self.build_actor()
+            self.critic = self.build_critic()
+        else:
+            self.actor = None
+            self.critic = None
+
+    def build_actor(self):
+        state_input = Input(shape=self.state_size)
+        advantage = Input(shape=(1,))
+        old_prediction = Input(shape=(self.action_size,))
+
+        x = Conv2D(32, kernel_size=8, strides=4, activation='relu')(
+            state_input)
+        x = Conv2D(64, kernel_size=4, strides=2, activation='relu')(x)
+        x = Conv2D(64, kernel_size=3, strides=1, activation='relu')(x)
+        x = Flatten()(x)
+        x = Dense(512, activation='relu')(x)
+        output_actions = Dense(self.action_size, activation='softmax')(x)
+
+        model = Model(inputs=[state_input, advantage, old_prediction],
+                      outputs=[output_actions])
+        model.compile(optimizer=Adam(lr=self.learning_rate),
+                      loss=[proximal_policy_optimization_loss(advantage,
+                                                              old_prediction)])
+
+        return model
+
+    def build_critic(self):
+        state_input = Input(shape=self.state_size)
+
+        x = Conv2D(32, kernel_size=8, strides=4, activation='relu')(
+            state_input)
+        x = Conv2D(64, kernel_size=4, strides=2, activation='relu')(x)
+        x = Conv2D(64, kernel_size=3, strides=1, activation='relu')(x)
+        x = Flatten()(x)
+        x = Dense(512, activation='relu')(x)
+        output_actions = Dense(1)(x)
+
+        model = Model(inputs=[state_input], outputs=[output_actions])
+        model.compile(optimizer=Adam(lr=self.learning_rate), loss='mse')
+
+        return model
+
+    def load_model(self):
+        self.actor = load_model(self.actor_path)
+        self.critic = load_model(self.critic_path)
+        self.epsilon = 0.0
+
+    def act(self, state):
+        # Explore randomly
+        if random.random() <= self.epsilon:
+            return random.randrange(self.action_size)
+        else:
+            img = state.reshape((-1, *state.shape))
+            dummy_advantage = np.zeros((1, 1))
+            dummy_action = np.zeros((1, self.action_size))
+            action = self.actor.predict([img, dummy_advantage, dummy_action])
+            return np.argmax(action[0])
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.add(state, action, reward, next_state, done)
+
+    def replay(self, sample_batch_size):
+        batch_size = min(self.memory.size, sample_batch_size)
+
+        # Get a sample replay from memory
+        state, action_index, reward, next_state, done = self.memory.sample(
+            batch_size)
+        action = np.eye(self.action_size)[action_index]
+        old_prediction = action.copy()
+
+        # Calculate advantage, refer to https://arxiv.org/pdf/1602.01783.pdf
+        critic_pred = self.critic.predict(state).reshape((-1))
+        advantage = reward - critic_pred
+
+        state = state.reshape((-1, *self.state_size))
+
+        self.actor.fit([state, advantage, old_prediction], [action],
+                       batch_size=sample_batch_size,
+                       epochs=self.epochs_per_replay, verbose=0,
+                       callbacks=[self.actor_checkpointer])
+
+        self.critic.fit([state], [reward], batch_size=sample_batch_size,
+                        epochs=self.epochs_per_replay, verbose=0,
+                        callbacks=[self.critic_checkpointer])
 
         # Make sure that model still experiments after long time
         if self.epsilon > self.epsilon_min:
