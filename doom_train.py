@@ -1,4 +1,4 @@
-from agents import DuelingDoom, PPODoom
+from agents import DuelingDoom, PPODoom, BaseQDoom
 from vizdoom_wrapper import VizdoomWrapper
 
 import tqdm
@@ -6,25 +6,26 @@ import numpy as np
 from collections import OrderedDict
 
 
-training_episodes_per_epoch = 500
+training_episodes_per_epoch = 2000
 testing_episodes_per_epoch = 50
-epochs = 200
+epochs = 20
 replay_batch_size = 32
 
 load_pretrained_network = False
 
 print('Initialising VizDoom...')
-config_path = 'scenarios/defend_the_center.cfg'
-actor_path = 'models/defend_the_center_actor.hd5'
-critic_path = 'models/defend_the_center_critic.hd5'
-reward_table = OrderedDict({'FRAGCOUNT': 10, 'AMMO2': 1})
-resolution = (84, 84)
+config_path = 'scenarios/basic.cfg'
+actor_path = 'models/basic_actor.hd5'
+critic_path = 'models/basic_critic.hd5'
+reward_table = OrderedDict({'FRAGCOUNT': 1})
+resolution = (90, 60)
 doom = VizdoomWrapper(config_path=config_path, reward_table=reward_table,
-                      frame_resolution=resolution, show_mode=False)
+                      frame_resolution=resolution, show_mode=False,
+                      frame_stack=1)
 
 print('Initialising Doomguy...')
-doomguy = PPODoom(doom.get_state_size(), doom.get_action_size(), actor_path,
-                  critic_path)
+doomguy = BaseQDoom(doom.get_state_size(), doom.get_action_size())
+# doomguy = DuelingDoom(doom.get_state_size(), doom.get_action_size())
 if load_pretrained_network:
     doomguy.load_model()
 

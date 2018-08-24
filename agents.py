@@ -1,7 +1,7 @@
 from keras.models import Model, load_model
 from keras.layers import Dense, Conv2D, Flatten, Input, Lambda, add
 from keras.callbacks import ModelCheckpoint
-from keras.optimizers import Adam
+from keras.optimizers import Adam, RMSprop
 # needs to stay as K because keras otherwise doesn't know how to load the model
 from keras import backend as K
 import random
@@ -57,11 +57,100 @@ class ReplayMemory:
                 self.next_state[i], self.done[i])
 
 
+class BaseQDoom:
+    def __init__(self, state_size, action_size, initialise_model=True):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.learning_rate = 0.00025
+        self.gamma = 0.99
+        self.update_target_frequency = 3000
+        self.episode = 0
+
+        # Exploration parameters
+        self.epsilon_initial = 1.0
+        self.epsilon = 1.0
+        self.epsilon_min = 0.001
+        self.exploration_steps = 25000
+
+        self.memory = ReplayMemory(capacity=25000, state_size=self.state_size)
+
+        self.weight_backup = 'models/doom_defend_the_center.hd5'
+        self.checkpointer = ModelCheckpoint(filepath=self.weight_backup,
+                                            verbose=0, save_best_only=False,
+                                            period=1000)
+        if initialise_model:
+            self.model = self.build_model()
+            self.target_model = self.build_model()
+        else:
+            self.model = None
+            self.target_model = None
+
+    def build_model(self):
+        state_input = Input(shape=self.state_size)
+        x = Conv2D(8, kernel_size=6, strides=3, activation='relu')(
+            state_input)
+        x = Conv2D(8, kernel_size=3, strides=2, activation='relu')(x)
+        x = Flatten()(x)
+
+        # state value tower - V
+        x = Dense(128, activation='relu')(x)
+        x = Dense(self.action_size, )(x)
+
+        model = Model(inputs=state_input, outputs=x)
+        rms = RMSprop(lr=self.learning_rate)
+        model.compile(loss='mse', optimizer=rms)
+
+        return model
+
+    def load_model(self):
+        self.model = load_model(self.weight_backup)
+        self.target_model = load_model(self.weight_backup)
+        self.epsilon = 0.0
+
+    def act(self, state):
+        # Explore randomly
+        if random.random() <= self.epsilon:
+            return random.randrange(self.action_size)
+        else:
+            img = state.reshape((-1, *state.shape))
+            action = self.model.predict(img)
+            return np.argmax(action[0])
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.add(state, action, reward, next_state, done)
+
+    def replay(self, sample_batch_size):
+        batch_size = min(self.memory.size, sample_batch_size)
+
+        # Get a sample replay from memory
+        state, action, reward, next_state, done = self.memory.sample(
+            batch_size)
+
+        q2 = np.max(self.model.predict(next_state), axis=1)
+        target_q = self.model.predict(state)
+        target_q[np.arange(target_q.shape[0]), action] = reward + (
+                self.gamma * (1 - done) * q2)
+
+        history = self.model.fit(state.reshape((-1, *self.state_size)),
+                                 target_q.reshape((-1, self.action_size)),
+                                 batch_size=sample_batch_size, epochs=1,
+                                 verbose=0, callbacks=[self.checkpointer])
+
+        mean_loss = np.mean(history.history['loss'])
+
+        # Make sure that model still experiments after long time
+        if self.epsilon > self.epsilon_min:
+            self.epsilon -= (self.epsilon_initial - self.epsilon_min) \
+                            / self.exploration_steps
+
+        return mean_loss
+
+
 class DuelingDoom:
     def __init__(self, state_size, action_size, initialise_model=True):
         self.state_size = state_size
         self.action_size = action_size
-        self.learning_rate = 0.0001
+        self.learning_rate = 0.00025
         self.gamma = 0.99
         self.update_target_frequency = 3000
         self.episode = 0
