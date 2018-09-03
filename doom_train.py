@@ -6,7 +6,7 @@ import numpy as np
 from collections import OrderedDict
 
 
-training_episodes_per_epoch = 2000
+training_episodes_per_epoch = 200
 testing_episodes_per_epoch = 50
 epochs = 20
 replay_batch_size = 32
@@ -24,8 +24,8 @@ doom = VizdoomWrapper(config_path=config_path, reward_table=reward_table,
                       frame_stack=1)
 
 print('Initialising Doomguy...')
-doomguy = BaseQDoom(doom.get_state_size(), doom.get_action_size())
-# doomguy = DuelingDoom(doom.get_state_size(), doom.get_action_size())
+doomguy = PPODoom(doom.get_state_size(), doom.get_action_size(),
+                  actor_path=actor_path, critic_path=critic_path)
 if load_pretrained_network:
     doomguy.load_model()
 
@@ -35,9 +35,11 @@ for epoch in range(epochs):
     print('\nTraining...')
     doom.new_game()
     train_scores = []
+    train_losses = []
     prev_variables = []
 
-    for episode in tqdm.trange(training_episodes_per_epoch, leave=False):
+    tqdm_bar = tqdm.trange(training_episodes_per_epoch, leave=False)
+    for episode in tqdm_bar:
         # Get state, action, reward, done and next state
         state = doom.get_current_state()
         best_action_index = doomguy.act(state)
@@ -46,7 +48,8 @@ for epoch in range(epochs):
         # Save to memory
         doomguy.remember(state, best_action_index, reward, next_state, done)
         # Replay from memory
-        doomguy.replay(replay_batch_size)
+        training_loss = doomguy.replay(replay_batch_size)
+        train_losses.append(training_loss)
 
         # Store results on game end
         if done:
@@ -56,10 +59,13 @@ for epoch in range(epochs):
 
     if len(train_scores) > 0:
         train_scores = np.array(train_scores)
+        train_losses = np.array(train_losses)
 
         print('Results: mean: {}±{}, min: {}, max: {}'
               .format(train_scores.mean(), train_scores.std(),
                       train_scores.min(), train_scores.max()))
+        print('Mean loss: {}±{}'
+              .format(train_losses.mean(), train_losses.std()))
         print('Current exploration rate: {}'.format(doomguy.epsilon))
 
     print('\nTesting...')

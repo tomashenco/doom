@@ -2,7 +2,6 @@ import vizdoom
 from skimage.transform import resize
 import numpy as np
 from collections import OrderedDict
-import time
 
 
 class VizdoomWrapper:
@@ -41,6 +40,15 @@ class VizdoomWrapper:
         # Display settings
         game.set_window_visible(self.show_mode)
         game.set_sound_enabled(self.show_mode)
+
+        if self.show_mode:
+            game.set_mode(vizdoom.Mode.PLAYER)
+        else:
+            game.set_mode(vizdoom.Mode.PLAYER)
+
+        game.set_depth_buffer_enabled(True)
+        game.set_labels_buffer_enabled(True)
+        game.set_automap_buffer_enabled(True)
         # Game variables used for reward enhancing
         for name, _ in self.reward_table.items():
             try:
@@ -80,8 +88,8 @@ class VizdoomWrapper:
         return output_reward
 
     def __update(self):
-        current_frame = self.__preprocess_image(
-            self.game.get_state().screen_buffer)
+        state = self.game.get_state().screen_buffer / 255.0
+        current_frame = self.__preprocess_image(state)
         self.stacked_frames = np.append(self.stacked_frames[:, :, 1:],
                                         current_frame, axis=2)
 
@@ -122,11 +130,10 @@ class VizdoomWrapper:
         self.game.set_action(action)
         for _ in range(self.frame_repeat):
             self.game.advance_action()
-            time.sleep(0.02)
 
         done = self.is_done()
         if not done:
-            reward = self.__enhance_reward(0)
+            reward = self.__enhance_reward(self.game.get_last_reward())
             self.total_reward += reward
 
         return done

@@ -1,5 +1,6 @@
-from keras.models import Model, load_model
+from keras.models import Model, load_model, Sequential
 from keras.layers import Dense, Conv2D, Flatten, Input, Lambda, add
+from keras.layers import BatchNormalization
 from keras.callbacks import ModelCheckpoint
 from keras.optimizers import Adam, RMSprop
 # needs to stay as K because keras otherwise doesn't know how to load the model
@@ -10,18 +11,29 @@ import numpy as np
 
 def proximal_policy_optimization_loss(advantage, old_prediction):
     def loss(y_true, y_pred):
-        clipping_epsilon = 0.2
+        clip = 0.2
 
         prob = K.sum(y_true * y_pred)
         old_prob = K.sum(y_true * old_prediction)
         # Add small number to avoid division by 0
-        r = prob / (old_prob + 1e-10)
+        ratio = prob / (old_prob + 1e-10)
 
-        # Just use clipping
-        return - K.minimum(r * advantage,
-                           K.clip(r,
-                                  1 - clipping_epsilon,
-                                  1 + clipping_epsilon)) * advantage
+        # Conservative surrogate
+        surr1 = ratio * advantage
+        # Clipping surrogate
+        surr2 = K.clip(ratio, 1.0 - clip, 1.0 + clip) * advantage
+
+        # PPO pessimistic surrogate
+        return - K.minimum(surr1, surr2)
+
+    return loss
+
+
+def stochastic_policy_gradient_loss(discounted_reward):
+    def loss(y_true, y_pred):
+        negative_log_probability = K.categorical_crossentropy(
+            target=y_true, output=y_pred, from_logits=False)
+        return K.mean(negative_log_probability * discounted_reward)
 
     return loss
 
@@ -55,6 +67,13 @@ class ReplayMemory:
         i = random.sample(range(0, self.size), sample_size)
         return (self.state[i], self.action[i], self.reward[i],
                 self.next_state[i], self.done[i])
+
+    def bulk(self):
+        return (self.state[:self.size, :, :, :],
+                self.action[:self.size],
+                self.reward[:self.size],
+                self.next_state[:self.size, :, :, :],
+                self.done[:self.size])
 
 
 class BaseQDoom:
@@ -94,7 +113,7 @@ class BaseQDoom:
 
         # state value tower - V
         x = Dense(128, activation='relu')(x)
-        x = Dense(self.action_size, )(x)
+        x = Dense(self.action_size)(x)
 
         model = Model(inputs=state_input, outputs=x)
         rms = RMSprop(lr=self.learning_rate)
@@ -159,7 +178,7 @@ class DuelingDoom:
         self.epsilon_initial = 1.0
         self.epsilon = 1.0
         self.epsilon_min = 0.001
-        self.exploration_steps = 250000
+        self.exploration_steps = 25000
 
         self.memory = ReplayMemory(capacity=25000, state_size=self.state_size)
 
@@ -241,28 +260,32 @@ class DuelingDoom:
         if self.episode % self.update_target_frequency:
             self.target_model.set_weights(self.model.get_weights())
 
-        self.model.fit(state.reshape((-1, *self.state_size)),
-                       target.reshape((-1, self.action_size)),
-                       batch_size=sample_batch_size, epochs=1, verbose=0,
-                       callbacks=[self.checkpointer])
+        history = self.model.fit(state.reshape((-1, *self.state_size)),
+                                 target.reshape((-1, self.action_size)),
+                                 batch_size=sample_batch_size, epochs=1,
+                                 verbose=0, callbacks=[self.checkpointer])
+
+        mean_loss = np.mean(history.history['loss'])
 
         # Make sure that model still experiments after long time
         if self.epsilon > self.epsilon_min:
             self.epsilon -= (self.epsilon_initial - self.epsilon_min) \
                             / self.exploration_steps
 
+        return mean_loss
+
 
 class PPODoom:
     def __init__(self, state_size, action_size, actor_path, critic_path,
                  initialise_model=True):
-        self.learning_rate = 1e-4
+        self.learning_rate = 0.00025
         self.epochs_per_replay = 10
 
         # Exploration parameters
         self.epsilon_initial = 1.0
         self.epsilon = 1.0
         self.epsilon_min = 0.001
-        self.exploration_steps = 250000 / self.epochs_per_replay
+        self.exploration_steps = 25000 / self.epochs_per_replay
 
         self.state_size = state_size
         self.action_size = action_size
@@ -292,17 +315,16 @@ class PPODoom:
         advantage = Input(shape=(1,))
         old_prediction = Input(shape=(self.action_size,))
 
-        x = Conv2D(32, kernel_size=8, strides=4, activation='relu')(
+        x = Conv2D(8, kernel_size=6, strides=3, activation='relu')(
             state_input)
-        x = Conv2D(64, kernel_size=4, strides=2, activation='relu')(x)
-        x = Conv2D(64, kernel_size=3, strides=1, activation='relu')(x)
+        x = Conv2D(8, kernel_size=3, strides=2, activation='relu')(x)
         x = Flatten()(x)
-        x = Dense(512, activation='relu')(x)
-        output_actions = Dense(self.action_size, activation='softmax')(x)
+        x = Dense(128, activation='relu')(x)
+        output_actions = Dense(self.action_size)(x)
 
         model = Model(inputs=[state_input, advantage, old_prediction],
                       outputs=[output_actions])
-        model.compile(optimizer=Adam(lr=self.learning_rate),
+        model.compile(optimizer=RMSprop(lr=self.learning_rate),
                       loss=[proximal_policy_optimization_loss(advantage,
                                                               old_prediction)])
 
@@ -311,22 +333,25 @@ class PPODoom:
     def build_critic(self):
         state_input = Input(shape=self.state_size)
 
-        x = Conv2D(32, kernel_size=8, strides=4, activation='relu')(
+        x = Conv2D(8, kernel_size=6, strides=3, activation='relu')(
             state_input)
-        x = Conv2D(64, kernel_size=4, strides=2, activation='relu')(x)
-        x = Conv2D(64, kernel_size=3, strides=1, activation='relu')(x)
+        x = Conv2D(8, kernel_size=3, strides=2, activation='relu')(x)
         x = Flatten()(x)
-        x = Dense(512, activation='relu')(x)
+        x = Dense(128, activation='relu')(x)
         output_actions = Dense(1)(x)
 
         model = Model(inputs=[state_input], outputs=[output_actions])
-        model.compile(optimizer=Adam(lr=self.learning_rate), loss='mse')
+        model.compile(optimizer=RMSprop(lr=self.learning_rate), loss='mse')
 
         return model
 
     def load_model(self):
-        self.actor = load_model(self.actor_path)
-        self.critic = load_model(self.critic_path)
+        self.actor = self.build_actor()
+        self.actor.load_weights(self.actor_path)
+
+        self.critic = self.build_critic()
+        self.critic.load_weights(self.critic_path)
+
         self.epsilon = 0.0
 
     def act(self, state):
@@ -358,10 +383,12 @@ class PPODoom:
 
         state = state.reshape((-1, *self.state_size))
 
-        self.actor.fit([state, advantage, old_prediction], [action],
-                       batch_size=sample_batch_size,
-                       epochs=self.epochs_per_replay, verbose=0,
-                       callbacks=[self.actor_checkpointer])
+        history = self.actor.fit([state, advantage, old_prediction], [action],
+                                 batch_size=sample_batch_size,
+                                 epochs=self.epochs_per_replay, verbose=0,
+                                 callbacks=[self.actor_checkpointer])
+
+        mean_loss = np.mean(history.history['loss'])
 
         self.critic.fit([state], [reward], batch_size=sample_batch_size,
                         epochs=self.epochs_per_replay, verbose=0,
@@ -371,3 +398,104 @@ class PPODoom:
         if self.epsilon > self.epsilon_min:
             self.epsilon -= (self.epsilon_initial - self.epsilon_min) \
                             / self.exploration_steps
+
+        return mean_loss
+
+
+class PolicyGradientAgent:
+    def __init__(self, state_size, action_size, learning_rate, gamma,
+                 save_path, initialise_model=True):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.learning_rate = learning_rate
+        self.gamma = gamma
+        self.weight_backup = save_path
+        self.memory = ReplayMemory(50000, self.state_size)
+        self.checkpointer = ModelCheckpoint(filepath=self.weight_backup,
+                                            verbose=0, save_best_only=False,
+                                            period=10)
+
+        if initialise_model:
+            self.model = self.build_model()
+        else:
+            self.model = None
+
+    def build_model(self):
+        state = Input(shape=self.state_size)
+        discounted_reward = Input(shape=(1,))
+        x = Conv2D(32, kernel_size=8, strides=4, activation='relu',
+                   input_shape=self.state_size)(state)
+        x = BatchNormalization()(x)
+
+        x = Conv2D(64, kernel_size=4, strides=2, activation='relu')(x)
+        x = BatchNormalization()(x)
+
+        x = Conv2D(64, kernel_size=3, strides=1, activation='relu')(x)
+        x = BatchNormalization()(x)
+
+        x = Flatten()(x)
+        x = Dense(512, activation='relu')(x)
+        output = Dense(self.action_size, activation='softmax')(x)
+
+        model = Model(inputs=[state, discounted_reward], outputs=[output])
+
+        adam = Adam(lr=self.learning_rate)
+        model.compile(loss=stochastic_policy_gradient_loss(discounted_reward),
+                      optimizer=adam)
+
+        return model
+
+    def load_model(self):
+        self.model = self.build_model()
+        self.model.load_weights(self.weight_backup)
+
+    def reset_memory(self):
+        self.memory = ReplayMemory(50000, self.state_size)
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.add(state, action, reward, next_state, done)
+
+    def act(self, state):
+        state = state.reshape((-1, *state.shape))
+        dummy_reward = np.zeros((1, 1))
+
+        policy = self.model.predict([state, dummy_reward])
+        action_index = np.random.choice(self.action_size, p=policy.flatten())
+        return action_index
+
+    def discount_and_normalize_rewards(self, episode_rewards):
+        discounted_episode_rewards = np.zeros_like(episode_rewards)
+        cumulative = 0.0
+
+        # Reward for an action is also all discounted rewards that it resulted
+        # in the future
+        for i in reversed(range(len(episode_rewards))):
+            cumulative = cumulative * self.gamma + episode_rewards[i]
+            discounted_episode_rewards[i] = cumulative
+
+        # Normalize rewards by subtracting mean and dividing by std
+        # This avoids big variation in rewards for different episodes
+        mean = np.mean(discounted_episode_rewards)
+        std = np.std(discounted_episode_rewards)
+        discounted_episode_rewards = (discounted_episode_rewards - mean) / std
+
+        return discounted_episode_rewards
+
+    def train(self):
+        state, action_index, reward, next_state, done = self.memory.bulk()
+
+        targets = np.zeros((len(action_index), self.action_size))
+        for i in range(len(action_index)):
+            targets[i, action_index] = 1
+
+        discounted_reward = self.discount_and_normalize_rewards(reward)
+
+        loss = self.model.fit(x=[state, discounted_reward], y=targets,
+                              epochs=1, verbose=0,
+                              callbacks=[self.checkpointer])
+
+        return loss.history['loss']
+
+
+
+
